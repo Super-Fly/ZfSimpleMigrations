@@ -114,42 +114,64 @@ class Migration implements ServiceLocatorAwareInterface
      */
     public function migrate($version = null, $force = false, $down = false, $fake = false)
     {
-        $migrations = $this->getMigrationClasses($force);
-
-        if (!is_null($version) && !$this->hasMigrationVersions($migrations, $version)) {
-            throw new MigrationException(sprintf('Migration version %s is not found!', $version));
-        }
-
-        $currentMigrationVersion = $this->migrationVersionTable->getCurrentVersion();
-        if (!is_null($version) && $version == $currentMigrationVersion && !$force) {
-            throw new MigrationException(sprintf('Migration version %s is current version!', $version));
-        }
-
-        if ($version && $force) {
-            foreach ($migrations as $migration) {
-                if ($migration['version'] == $version) {
-                    // if existing migration is forced to apply - delete its information from migrated
-                    // to avoid duplicate key error
-                    if (!$down) $this->migrationVersionTable->delete($migration['version']);
-                    $this->applyMigration($migration, $down, $fake);
-                    break;
+        if ($version) {    // fixet target $version
+            if ($force) {    // up OR down only $version
+                $migrations = $this->getMigrationClasses(true);    // All
+                if (!$this->hasMigrationVersions($migrations, $version)) {
+                    throw new MigrationException(sprintf('Migration version %s is not found!', $version));
                 }
+
+                // find needed migrationClass
+                foreach ($migrations as $migration) {
+                    if ($migration['version'] == $version) {
+                        if (!$down && $migration['applied']) {
+                            // if existing migration is forced to apply - delete its information from migrated
+                            // to avoid duplicate key error
+                            $this->migrationVersionTable->delete($migration['version']);
+                        }
+
+                        $this->applyMigration($migration, $down, $fake);
+                        break;
+                    }
+                }
+                return;
             }
-            // target migration version not set or target version is greater than last applied migration -> apply migrations
-        } elseif (is_null($version) || (!is_null($version) && $version > $currentMigrationVersion)) {
-            foreach ($migrations as $migration) {
-                if ($migration['version'] > $currentMigrationVersion) {
-                    if (is_null($version) || (!is_null($version) && $version >= $migration['version'])) {
+
+            // !$force: up OR down all versions till target $version
+
+            $currentMigrationVersion = $this->migrationVersionTable->getCurrentVersion();
+            if ($version == $currentMigrationVersion) {
+                throw new MigrationException('No migrations to apply.');
+            }
+            if ($version < $currentMigrationVersion) {
+                // rollback all applied migrations bigger than target $version
+                $migrations = $this->getMigrationClasses(true);    // All
+                $migrationsByDesc = $this->sortMigrationsByVersionDesc($migrations);
+                foreach ($migrationsByDesc as $migration) {
+                    if ($migration['version'] > $version && $migration['applied']) {
+                        $this->applyMigration($migration, true, $fake);
+                    }
+                }
+            } else {    // $version > $currentMigrationVersion
+                $migrations = $this->getMigrationClasses(false);    // not-applied only
+                // apply all not-applied migrations <= target $version
+                foreach ($migrations as $migration) {
+                    if ($migration['version'] <= $version && !$migration['applied']) {
                         $this->applyMigration($migration, false, $fake);
                     }
                 }
             }
-            // target migration version is set -> rollback migration
-        } elseif (!is_null($version) && $version < $currentMigrationVersion) {
-            $migrationsByDesc = $this->sortMigrationsByVersionDesc($migrations);
-            foreach ($migrationsByDesc as $migration) {
-                if ($migration['version'] > $version && $migration['version'] <= $currentMigrationVersion) {
-                    $this->applyMigration($migration, true, $fake);
+        }
+        else {
+            $migrations = $this->getMigrationClasses(false);    // not-applied only
+            if (empty($migrations)) {
+                throw new MigrationException('No migrations to apply.');
+            }
+
+            // apply all existing not-applied migrations
+            foreach ($migrations as $migration) {
+                if (!$migration['applied']) {
+                    $this->applyMigration($migration, false, $fake);
                 }
             }
         }
@@ -314,7 +336,7 @@ class Migration implements ServiceLocatorAwareInterface
         } catch (\Exception $e) {
             $this->connection->rollback();
             $msg = sprintf('%s; File: %s; Line #%d', $e->getMessage(), $e->getFile(), $e->getLine());
-            throw new MigrationException($msg, $e->getCode(), $e);
+            throw new MigrationException($msg, (int) $e->getCode(), $e);
         }
     }
 

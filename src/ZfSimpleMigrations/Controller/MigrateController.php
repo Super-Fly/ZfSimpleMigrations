@@ -88,24 +88,20 @@ class MigrateController extends AbstractActionController
      */
     public function applyAction()
     {
-        $migrations = $this->getMigration()->getMigrationClasses();
-        $currentMigrationVersion = $this->getMigration()->getCurrentVersion();
-
         $version = $this->getRequest()->getParam('version');
         $force = $this->getRequest()->getParam('force');
         $down = $this->getRequest()->getParam('down');
         $fake = $this->getRequest()->getParam('fake');
-        $name = $this->getRequest()->getParam('name');
 
-        if (is_null($version) && $force) {
-            return "Can't force migration apply without migration version explicitly set.";
+        if (!$version && $force) {
+            return "Can't force migration without migration version explicitly set.";
         }
-        if (is_null($version) && $fake) {
-            return "Can't fake migration apply without migration version explicitly set.";
+        if (!$version && $down) {
+            return "Can't rollback migration without migration version explicitly set.";
         }
-        if (!$force && is_null($version) && $currentMigrationVersion >= $this->getMigration()->getMaxMigrationVersion($migrations)) {
-            return "No migrations to apply.\n";
-        }
+//         if (!$version && $fake) {
+//             return "Can't fake migration apply without migration version explicitly set.";
+//         }
 
         $this->getMigration()->migrate($version, $force, $down, $fake);
         return "Migrations applied!\n";
